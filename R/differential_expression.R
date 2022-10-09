@@ -1398,6 +1398,113 @@ DifferentialLRT <- function(x, y, xmin = 0) {
   return(pchisq(q = lrt_diff, df = 3, lower.tail = F))
 }
 
+# Add weighted t test. Internal function
+#
+#' @importFrom Hmisc wtd.mean wtd.var
+#' @importFrom stats pt
+#
+wtd.t.test <- function(x, y=0, weight=NULL, weighty=NULL, samedata=TRUE, alternative="two.tailed", mean1=TRUE, bootse=FALSE, bootp=FALSE, bootn=1000, drops="pairwise"){
+  if(is.null(weight)){
+    weight <- rep(1, length(x))
+  }
+  if(bootse==FALSE & bootp==TRUE)
+    warning("bootp can only be used with bootstrapped standard errors")
+  if(length(y)!=length(x) & length(y)>1){
+    if(samedata==TRUE)
+      warning("Treating data for x and y separately because they are of different lengths")
+    samedata <- FALSE
+  }
+  if(length(y)==1)
+    samedata <- FALSE
+  if(samedata==TRUE & drops=="pairwise"){
+    use <- !is.na(x) & !is.na(y) & !is.na(weight)
+    x <- x[use]
+    if(length(y)>1)
+      y <- y[use]
+    weight <- weight[use]
+  }
+  if(is.null(weighty) & samedata==TRUE){
+    weighty <- weight
+  }
+  if(is.null(weighty) & samedata==FALSE & length(y)>1){
+    warning("y has no weights, weights for y are assumed to be 1")
+    weighty <- rep(1, length(y))
+  }
+  if(mean1==TRUE){
+    weight <- weight/mean(weight, na.rm=TRUE)
+    if(length(y)>1)
+      weighty <- weighty/mean(weighty, na.rm=TRUE)
+  }
+  #require(Hmisc)
+  n <- sum(weight[!is.na(x)], na.rm=TRUE)
+  mx <- wtd.mean(x, weight, na.rm=TRUE)
+  vx <- wtd.var(x, weight, na.rm=TRUE)
+  if(length(y)==1){
+    dif <- mx-y
+    sx <- sqrt(vx)
+    se <- sx/sqrt(n)
+    if(bootse==TRUE){
+      samps <- lapply(1:bootn, function(g) sample(1:length(x), round(sum(weight, na.rm=TRUE), 0), replace=TRUE, prob=weight))
+      sepests <- sapply(samps, function(q) mean(x[q], na.rm=TRUE))-y
+      se <- sqrt(var(sepests))
+    }
+    t <- (mx-y)/se
+    df <- n-1
+    #p.value <- (1-pt(abs(t), df))*2
+    p.value <- (pt(abs(t), df, lower.tail=FALSE))*2
+    if (alternative=="greater")
+      p.value <- pt(t, df, lower.tail=FALSE)    ## one sided p-value (greater)
+    if (alternative=="less")
+      p.value <- pt(t, df, lower.tail=TRUE)  ## one sided p-value (less)
+    if(bootp==TRUE & bootse==TRUE)
+      p.value <- 2*min(c(sum(sepests>y & !is.na(sepests))/sum(!is.na(sepests)), sum(sepests<y & !is.na(sepests))/sum(!is.na(sepests))))
+    if(bootp==TRUE & bootse==TRUE & alternative=="greater")
+      p.value <- sum(sepests>y & !is.na(sepests))/sum(!is.na(sepests))
+    if(bootp==TRUE & bootse==TRUE & alternative=="less")
+      p.value <- sum(sepests<y & !is.na(sepests))/sum(!is.na(sepests))
+    coef <- c(t, df, p.value)
+    out2 <- c(dif, mx, y, se)
+    names(coef) <- c("t.value", "df", "p.value")
+    names(out2) <- c("Difference", "Mean", "Alternative", "Std. Err")
+    out <- list("One Sample Weighted T-Test", coef, out2)
+    names(out) <- c("test", "coefficients", "additional")
+  }
+  if(length(y)>1){
+    n2 <- sum(weighty[!is.na(y)], na.rm=TRUE)
+    my <- wtd.mean(y, weighty, na.rm=TRUE)
+    vy <- wtd.var(y, weighty, na.rm=TRUE)
+    dif <- mx-my
+    sxy <- sqrt((vx/n)+(vy/n2))
+    if(bootse==TRUE){
+      samps1 <- lapply(1:bootn, function(g) sample(1:length(x), round(sum(weight, na.rm=TRUE), 0), replace=TRUE, prob=weight))
+      samps2 <- lapply(1:bootn, function(g) sample(1:length(y), round(sum(weighty, na.rm=TRUE), 0), replace=TRUE, prob=weighty))
+      sepests1 <- sapply(samps1, function(q) mean(x[q], na.rm=TRUE))
+      sepests2 <- sapply(samps2, function(q) mean(y[q], na.rm=TRUE))
+      sxy <- sqrt(var(sepests1-sepests2, na.rm=TRUE))
+    }
+    df <- (((vx/n)+(vy/n2))^2)/((((vx/n)^2)/(n-1))+((vy/n2)^2/(n2-1)))
+    t <- (mx-my)/sxy
+    p.value <- (pt(abs(t), df, lower.tail=FALSE))*2
+    if (alternative=="greater")
+      p.value <- pt(t, df, lower.tail=FALSE)    ## one sided p-value (greater)
+    if (alternative=="less")
+      p.value <- pt(t, df, lower.tail=TRUE)  ## one sided p-value (less)
+    if(bootp==TRUE & bootse==TRUE)
+      p.value <- 2*min(c(sum(sepests1>sepests2 & !is.na(sepests1))/sum(!is.na(sepests1)), sum(sepests1<sepests2 & !is.na(sepests1))/sum(!is.na(sepests1))))
+    if(bootp==TRUE & bootse==TRUE & alternative=="greater")
+      p.value <- sum(sepests1>sepests2 & !is.na(sepests1))/sum(!is.na(sepests1))
+    if(bootp==TRUE & bootse==TRUE & alternative=="less")
+      p.value <- sum(sepests1<sepests2 & !is.na(sepests1))/sum(!is.na(sepests1))
+    coef <- c(t, df, p.value)
+    out2 <- c(dif, mx, my, sxy)
+    names(coef) <- c("t.value", "df", "p.value")
+    names(out2) <- c("Difference", "Mean.x", "Mean.y", "Std. Err")
+    out <- list("Two Sample Weighted T-Test (Welch)", coef, out2)
+    names(out) <- c("test", "coefficients", "additional")
+  }
+  out
+}
+
 # Likelihood ratio test for zero-inflated data
 #
 # Identifies differentially expressed genes between two groups of cells using
@@ -1472,8 +1579,32 @@ DiffTTest <- function(
   data.use,
   cells.1,
   cells.2,
-  verbose = TRUE
+  verbose = TRUE,
+  rebalance = FALSE
 ) {
+  group.info <- data.frame(
+    group = rep(
+      x = c('Group1', 'Group2'),
+      times = c(length(x = cells.1), length(x = cells.2))
+    )
+  )
+  rownames(group.info) <- c(cells.1, cells.2)
+  group.info[, "group"] <- factor(x = group.info[, "group"])
+
+  n_t <- length(x = cells.1) + length(x = cells.2)
+  n_t1 <- length(x = cells.1)
+
+  ## Add weights
+  if(rebalance) {
+    weights <- ifelse(test = group.info[, "group"] == "Group1",
+                      yes = n_t/n_t1,
+                      no = n_t/(n_t - n_t1))
+    weights <- weights/mean(weights)
+    weights1 <- weights[group.info[, "group"] == "Group1"]
+    weights2 <- weights[group.info[, "group"] != "Group1"]
+    }
+  else {weights = 1}
+
   my.sapply <- ifelse(
     test = verbose && nbrOfWorkers() == 1,
     yes = pbsapply,
@@ -1483,7 +1614,14 @@ DiffTTest <- function(
     x = my.sapply(
       X = 1:nrow(data.use),
       FUN = function(x) {
-        t.test(x = data.use[x, cells.1], y = data.use[x, cells.2])$p.value
+        if(rebalance== TRUE) {
+          wtd.t.test(x = data.use[x, cells.1],
+                     y = data.use[x, cells.2],
+                     weight = weights1,
+                     weighty = weights2,
+                     samedata = FALSE,
+                     mean1 = FALSE)$coefficients[3]}
+          else {t.test(x = data.use[x, cells.1], y = data.use[x, cells.2])$p.value}
       }
     )
   )
@@ -1529,7 +1667,8 @@ GLMDETest <- function(
   min.cells = 3,
   latent.vars = NULL,
   test.use = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  rebalance = FALSE
 ) {
   group.info <- data.frame(
     group = rep(
@@ -1539,10 +1678,22 @@ GLMDETest <- function(
   )
   rownames(group.info) <- c(cells.1, cells.2)
   group.info[, "group"] <- factor(x = group.info[, "group"])
+
+  n_t <- length(x = cells.1) + length(x = cells.2)
+  n_t1 <- length(x = cells.1)
+
+  ## Add weights
+  if(rebalance) {
+    weights <- ifelse(test = group.info[, "group"] == "Group1",
+                       yes = n_t/n_t1,
+                       no = n_t/(n_t - n_t1))
+    weights <- weights/mean(weights)}
+  else {weights = 1}
+
   latent.vars <- if (is.null(x = latent.vars)) {
-    group.info
+    cbind(group.info, weights)
   } else {
-    cbind(x = group.info, latent.vars)
+    cbind(x = group.info, latent.vars, weights)
   }
   latent.var.names <- colnames(x = latent.vars)
   my.sapply <- ifelse(
@@ -1581,10 +1732,13 @@ GLMDETest <- function(
           paste(latent.var.names, collapse = "+")
         ))
         p.estimate <- 2
+
         if (test.use == "negbinom") {
           try(
             expr = p.estimate <- summary(
-              object = glm.nb(formula = fmla, data = latent.vars)
+              # Add weights
+              object = glm.nb(formula = fmla, data = latent.vars,
+                              weights = latent.vars$weights)
             )$coef[2, 4],
             silent = TRUE
           )
@@ -1593,7 +1747,8 @@ GLMDETest <- function(
           return(summary(object = glm(
             formula = fmla,
             data = latent.vars,
-            family = "poisson"
+            # Add weights
+            family = "poisson", weights = latent.vars$weights
           ))$coef[2,4])
         }
       }
@@ -1905,6 +2060,7 @@ PerformDE <- function(
   min.cells.feature,
   latent.vars,
   densify,
+  rebalance = FALSE,
   ...
 ) {
   if (!(test.use %in% DEmethods_latent()) && !is.null(x = latent.vars)) {
@@ -1922,6 +2078,23 @@ PerformDE <- function(
   if (densify){
     data.use <- as.matrix(x = data.use)
   }
+
+  data.use.ori <- data.use
+  cells.1.ori <- cells.1
+  cells.2.ori <- cells.2
+
+  if (rebalance == TRUE) {
+    n_total <- length(c(cells.1, cells.2))
+
+    index_new1 <- sample(cells.1, n_total/2, replace = TRUE)
+    index_new2 <- sample(cells.2, n_total/2, replace = TRUE)
+    data.use <- data.use[, c(index_new1, index_new2), drop = FALSE]
+    cells.1 <- paste0("A", seq_len(n_total/2))
+    cells.2 <- paste0("B", seq_len(n_total/2))
+
+    colnames(data.use) <- c(cells.1, cells.2)
+  }
+
   de.results <- switch(
     EXPR = test.use,
     'wilcox' = WilcoxDETest(
@@ -1944,28 +2117,31 @@ PerformDE <- function(
       verbose = verbose
     ),
     't' = DiffTTest(
-      data.use = data.use,
-      cells.1 = cells.1,
-      cells.2 = cells.2,
-      verbose = verbose
+      data.use = data.use.ori,
+      cells.1 = cells.1.ori,
+      cells.2 = cells.2.ori,
+      verbose = verbose,
+      rebalance = rebalance
     ),
     'negbinom' = GLMDETest(
-      data.use = data.use,
-      cells.1 = cells.1,
-      cells.2 = cells.2,
+      data.use = data.use.ori,
+      cells.1 = cells.1.ori,
+      cells.2 = cells.2.ori,
       min.cells = min.cells.feature,
       latent.vars = latent.vars,
       test.use = test.use,
-      verbose = verbose
+      verbose = verbose,
+      rebalance = rebalance
     ),
     'poisson' = GLMDETest(
-      data.use = data.use,
-      cells.1 = cells.1,
-      cells.2 = cells.2,
+      data.use = data.use.ori,
+      cells.1 = cells.1.ori,
+      cells.2 = cells.2.ori,
       min.cells = min.cells.feature,
       latent.vars = latent.vars,
       test.use = test.use,
-      verbose = verbose
+      verbose = verbose,
+      rebalance = rebalance
     ),
     'MAST' = MASTDETest(
       data.use = data.use,
